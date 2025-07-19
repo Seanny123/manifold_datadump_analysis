@@ -75,7 +75,7 @@ def main():
         ):
             resolveTime = int(contract["resolutionTime"])
         else:
-            resolveTime = ""
+            resolveTime = -1
 
         records.append(
             {
