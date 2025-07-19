@@ -23,6 +23,10 @@ def convert_json_to_ndjson(input_filepath: Path, output_filepath: Path):
 if __name__ == "__main__":
     root = Path("manifold_datasets")
     convert_json_to_ndjson(
+        root / "manifold-comments-20240706.json" / "manifold-comments-20240706hi.json",
+        root / "comments.ndjson",
+    )
+    convert_json_to_ndjson(
         root / "manifold-dump-bets-04072024.json" / "bets.json", root / "bets.ndjson"
     )
     convert_json_to_ndjson(
