@@ -4,6 +4,8 @@ Create per-user metrics for churn analysis.
 
 from datetime import timedelta
 
+import numpy as np
+np.seterr(all="raise")
 import pandas as pd
 from tqdm import tqdm
 
@@ -90,12 +92,77 @@ def calculate_bet_metrics(user_data, last_bet_time):
 
     daily_streak = calculate_most_recent_streak(user_data["createdTime"])
 
+    num_markets_7d = user_data[(user_data["createdTime"] >= last_bet_time - pd.Timedelta(days=7))]["contractId"].nunique()
+    bet_counts_7d = user_data[(user_data["createdTime"] >= last_bet_time - pd.Timedelta(days=7))].groupby("contractId").agg(
+        betsPerMarket=("createdTime", "count")
+    )
+    assert len(bet_counts_7d) > 0, "No bet counts data available for the user in the last 7 days."
+    assert not bet_counts_7d["betsPerMarket"].dropna().empty, "No bets per market data available for the user in the last 7 days."
+
+    median_bets_per_market_7d = bet_counts_7d["betsPerMarket"].median()
+    std_bets_per_market_7d = bet_counts_7d["betsPerMarket"].std()
+    min_bets_per_market_7d = bet_counts_7d["betsPerMarket"].min()
+    max_bets_per_market_7d = bet_counts_7d["betsPerMarket"].max()
+
+    num_markets_30d = user_data[(user_data["createdTime"] >= last_bet_time - pd.Timedelta(days=30))]["contractId"].nunique()
+    bet_counts_30d = user_data[(user_data["createdTime"] >= last_bet_time - pd.Timedelta(days=30))].groupby("contractId").agg(
+        betsPerMarket=("createdTime", "count")
+    )
+    assert len(bet_counts_30d) > 0, "No bet counts data available for the user in the last 30 days."
+    assert not bet_counts_30d["betsPerMarket"].dropna().empty, "No bets per market data available for the user in the last 30 days."
+
+    median_bets_per_market_30d = bet_counts_30d["betsPerMarket"].median()
+    std_bets_per_market_30d = bet_counts_30d["betsPerMarket"].std()
+    min_bets_per_market_30d = bet_counts_30d["betsPerMarket"].min()
+    max_bets_per_market_30d = bet_counts_30d["betsPerMarket"].max()
+
     return {
         "bettingDaysLast7Days": betting_days_last_7_days,
         "numBetsLast7Days": num_bets_last_7_days,
         "bettingDaysLast30Days": betting_days_last_30_days,
         "numBetsLast30Days": num_bets_last_30_days,
         "dailyStreak": daily_streak,
+        "numMarkets7Days": num_markets_7d,
+        "medianBetsPerMarket7Days": median_bets_per_market_7d,
+        "stdBetsPerMarket7Days": std_bets_per_market_7d,
+        "minBetsPerMarket7Days": min_bets_per_market_7d,
+        "maxBetsPerMarket7Days": max_bets_per_market_7d,
+        "numMarkets30Days": num_markets_30d,
+        "medianBetsPerMarket30Days": median_bets_per_market_30d,
+        "stdBetsPerMarket30Days": std_bets_per_market_30d,
+        "minBetsPerMarket30Days": min_bets_per_market_30d,
+        "maxBetsPerMarket30Days": max_bets_per_market_30d,
+    }
+
+
+def calculate_market_age_metrics(user_data, contracts, last_bet_time):
+    uc = user_data[(user_data["createdTime"] >= last_bet_time - pd.Timedelta(days=7))].merge(contracts, left_on="contractId", right_on="id", how="left", suffixes=("_u", "_c"))
+    market_age = uc["createdTime_u"] - uc["createdTime_c"]
+    assert len(market_age) > 0, "No market age data available for the user in the last 7 days."
+    assert not market_age.dropna().empty, "No market age data available for the user in the last 7 days."
+    median_market_age_7d = market_age.median().total_seconds() // (24 * 3600)
+    std_market_age_7d = market_age.std().total_seconds() // (24 * 3600)
+    min_market_age_7d = market_age.min().total_seconds() // (24 * 3600)
+    max_market_age_7d = market_age.max().total_seconds() // (24 * 3600)
+
+    uc = user_data[(user_data["createdTime"] >= last_bet_time - pd.Timedelta(days=30))].merge(contracts, left_on="contractId", right_on="id", how="left", suffixes=("_u", "_c"))
+    market_age = uc["createdTime_u"] - uc["createdTime_c"]
+    assert len(market_age) > 0, "No market age data available for the last 30 days"
+    assert not market_age.dropna().empty, "No market age data available for the last 30 days."
+    median_market_age_30d = market_age.median().total_seconds() // (24 * 3600)
+    std_market_age_30d = market_age.std().total_seconds() // (24 * 3600)
+    min_market_age_30d = market_age.min().total_seconds() // (24 * 3600)
+    max_market_age_30d = market_age.max().total_seconds() // (24 * 3600)
+
+    return {
+        "medianMarketAgeLast7Days": median_market_age_7d,
+        "stdMarketAgeLast7Days": std_market_age_7d,
+        "minMarketAgeLast7Days": min_market_age_7d,
+        "maxMarketAgeLast7Days": max_market_age_7d,
+        "medianMarketAgeLast30Days": median_market_age_30d,
+        "stdMarketAgeLast30Days": std_market_age_30d,
+        "minMarketAgeLast30Days": min_market_age_30d,
+        "maxMarketAgeLast30Days": max_market_age_30d,
     }
 
 
@@ -108,16 +175,44 @@ def main():
     contracts["createdTime"] = pd.to_datetime(contracts["createdTime"], unit="ms")
     comments["createdTime"] = pd.to_datetime(comments["createdTime"], unit="ms")
 
+    bet_times = bets.groupby("userId").agg(
+        firstBetTime=("createdTime", "min"), lastBetTime=("createdTime", "max")
+    )
+    bet_times = bet_times.assign(
+        daysSinceFirstBet=lambda x: (
+            pd.to_datetime("2024-07-06") - x["firstBetTime"]
+        ).dt.days,
+        daysSinceLastBet=lambda x: (
+            pd.to_datetime("2024-07-06") - x["lastBetTime"]
+        ).dt.days,
+    )
+    valid_user_ids = bet_times[
+        ((bet_times["daysSinceFirstBet"] > 30) & (bet_times["daysSinceLastBet"] < 30))
+        | ((bet_times["daysSinceLastBet"] > 30) & (bet_times["daysSinceLastBet"] < 120))
+    ]
+
+    valid_bets = bets[
+        bets["userId"].isin(valid_user_ids.index)
+        # filter out bets on markets that were filtered out previously
+        # due to being a poll or another weird kind of market type
+        & bets["contractId"].isin(contracts["id"].unique())
+    ]
+
+
     results = []
 
     for user_id, user_data in tqdm(
-        bets.sort_values(["userId", "createdTime"]).groupby("userId")
+        valid_bets.sort_values(["userId", "createdTime"]).groupby("userId")
     ):
         last_bet_time = user_data["createdTime"].max()
-        days_since_last_best = (pd.to_datetime("2024-07-06") - last_bet_time).days
+        days_since_last_bet = (pd.to_datetime("2024-07-06") - last_bet_time).days
 
         contract_metrics = calculate_contract_metrics(
             contracts=contracts, user_id=user_id, last_bet_time=last_bet_time
+        )
+
+        market_age_metrics = calculate_market_age_metrics(
+            user_data=user_data, contracts=contracts, last_bet_time=last_bet_time
         )
 
         commment_metrics = calculate_commment_metrics(
@@ -131,15 +226,18 @@ def main():
         results.append(
             {
                 "userId": user_id,
-                "lastBetTime": last_bet_time,
-                "daysSinceLastBet": days_since_last_best,
+                "daysSinceLastBet": days_since_last_bet,
                 **contract_metrics,
                 **commment_metrics,
                 **bet_metrics,
+                **market_age_metrics,
             }
         )
 
-    pd.DataFrame(results).to_parquet("manifold_datasets/churn.parquet")
+        if len(results) % 200 == 0:
+            pd.DataFrame(results).to_parquet("manifold_datasets/churn_tmp.parquet")
+
+    pd.DataFrame(results).to_parquet("manifold_datasets/churn_2.parquet")
 
 
 if __name__ == "__main__":
